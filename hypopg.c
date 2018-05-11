@@ -80,6 +80,12 @@ static void hypo_set_rel_pathlist_hook(PlannerInfo *root,
 									   RangeTblEntry *rte);
 static set_rel_pathlist_hook_type prev_set_rel_pathlist_hook = NULL;
 
+static void hypo_expand_inherited_rtentry_hook(PlannerInfo *root,
+					       RangeTblEntry *rte,
+					       Index rti);
+
+static expand_inherited_rtentry_hook_type prev_expand_inherited_rtentry_hook = NULL;
+
 static bool hypo_query_walker(Node *node);
 
 void
@@ -101,6 +107,9 @@ _PG_init(void)
 	prev_set_rel_pathlist_hook = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = hypo_set_rel_pathlist_hook;
 
+	prev_expand_inherited_rtentry_hook = expand_inherited_rtentry_hook;
+	expand_inherited_rtentry_hook = hypo_expand_inherited_rtentry_hook;
+	
 	isExplain = false;
 	hypoIndexes = NIL;
 
@@ -137,6 +146,7 @@ _PG_fini(void)
 	get_relation_info_hook = prev_get_relation_info_hook;
 	explain_get_index_name_hook = prev_explain_get_index_name_hook;
 	set_rel_pathlist_hook = prev_set_rel_pathlist_hook;
+	expand_inherited_rtentry_hook = prev_expand_inherited_rtentry_hook;
 }
 
 /*---------------------------------
@@ -340,11 +350,13 @@ hypo_get_relation_info_hook(PlannerInfo *root,
 		heap_close(relation, AccessShareLock);
 
 		if(hypo_table_oid_is_hypothetical(relationObjectId))
+		  { elog(NOTICE,"oid:%d",relationObjectId);
 		  /*
 		   * this relation is table we want to partition hypothetical,
 		   * inject hypothetical partitioning
 		   */
 		  hypo_injectHypotheticalPartitioning(root, relationObjectId, rel);
+		  }
 
 	}
 	if (prev_get_relation_info_hook)
@@ -368,13 +380,27 @@ hypo_set_rel_pathlist_hook(PlannerInfo *root,
 		prev_set_rel_pathlist_hook(root, rel, rti, rte);
 }
 
+/*
+ * Expand hypothetical partitions
+ */
+static void
+hypo_expand_inherited_rtentry_hook(PlannerInfo *root, RangeTblEntry *rte,
+				   Index rti)
+{
+  if(HYPO_ENABLED() && hypo_table_oid_is_hypothetical(rte->relid))
+	hypo_expandHypotheticalPartitioning(root, rte, rti);
+  
+  if (prev_expand_inherited_rtentry_hook)
+	prev_expand_inherited_rtentry_hook(root, rte, rti);
+}
 
 /*
- * Reset statistics.
+ * Reset all stored entries.
  */
 Datum
 hypopg_reset(PG_FUNCTION_ARGS)
 {
 	hypo_index_reset();
+	hypo_table_reset();
 	PG_RETURN_VOID();
 }

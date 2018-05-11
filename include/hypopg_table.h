@@ -22,6 +22,7 @@
 #define HYPO_ADD_PART_COLS	2	/* # of column hypopg_add_partition() returns */
 
 #include "optimizer/paths.h"
+#include "optimizer/prep.h"
 
 /*--- Structs --- */
 
@@ -72,5 +73,9 @@ void hypo_markDummyIfExcluded(PlannerInfo *root, RelOptInfo *rel,
 			      Index rti, RangeTblEntry *rte);
 void hypo_setPartitionPathlist(PlannerInfo *root, RelOptInfo *rel,
 			      Index rti, RangeTblEntry *rte);
+
+void hypo_expandHypotheticalPartitioning(PlannerInfo *root,
+										 RangeTblEntry *rte,
+										 Index rti);
 
 #endif
