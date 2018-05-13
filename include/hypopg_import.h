@@ -12,9 +12,13 @@
 #ifndef _HYPOPG_IMPORT_H_
 #define _HYPOPG_IMPORT_H_
 
+//#include "miscadmin.h"
+//#include "access/heapam.h"
+//#include "catalog/pg_inherits.h"
 #include "nodes/pg_list.h"
 #include "optimizer/planner.h"
 #include "optimizer/pathnode.h"
+//#include "optimizer/prep.h"
 #include "partitioning/partbounds.h"
 #include "utils/rel.h"
 
@@ -135,11 +139,6 @@ void make_inh_translation_list(Relation oldrelation, Relation newrelation,
 			       List **translated_vars);
 void set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte);
 void create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel);
-void expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
-									 Index parentRTindex, Relation parentrel,
-									 PlanRowMark *top_parentrc, Relation childrel,
-									 List **appinfos, RangeTblEntry **childrte_p,
-									 Index *childRTindex_p);
 Bitmapset *translate_col_privs(const Bitmapset *parent_privs,	List *translated_vars);
 
 /* Copied from src/backend/catalog/partition.c, not exported */

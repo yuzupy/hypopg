@@ -80,7 +80,7 @@ static void hypo_set_rel_pathlist_hook(PlannerInfo *root,
 									   RangeTblEntry *rte);
 static set_rel_pathlist_hook_type prev_set_rel_pathlist_hook = NULL;
 
-static void hypo_expand_inherited_rtentry_hook(PlannerInfo *root,
+static bool hypo_expand_inherited_rtentry_hook(PlannerInfo *root,
 					       RangeTblEntry *rte,
 					       Index rti);
 
@@ -109,7 +109,7 @@ _PG_init(void)
 
 	prev_expand_inherited_rtentry_hook = expand_inherited_rtentry_hook;
 	expand_inherited_rtentry_hook = hypo_expand_inherited_rtentry_hook;
-	
+
 	isExplain = false;
 	hypoIndexes = NIL;
 
@@ -350,7 +350,7 @@ hypo_get_relation_info_hook(PlannerInfo *root,
 		heap_close(relation, AccessShareLock);
 
 		if(hypo_table_oid_is_hypothetical(relationObjectId))
-		  { elog(NOTICE,"oid:%d",relationObjectId);
+		  {
 		  /*
 		   * this relation is table we want to partition hypothetical,
 		   * inject hypothetical partitioning
@@ -383,15 +383,20 @@ hypo_set_rel_pathlist_hook(PlannerInfo *root,
 /*
  * Expand hypothetical partitions
  */
-static void
+static bool
 hypo_expand_inherited_rtentry_hook(PlannerInfo *root, RangeTblEntry *rte,
-				   Index rti)
+								   Index rti)
 {
   if(HYPO_ENABLED() && hypo_table_oid_is_hypothetical(rte->relid))
-	hypo_expandHypotheticalPartitioning(root, rte, rti);
-  
+	{
+	  hypo_expandHypotheticalPartitioning(root, rte, rti);
+	  return 1;
+	}
+
   if (prev_expand_inherited_rtentry_hook)
-	prev_expand_inherited_rtentry_hook(root, rte, rti);
+	return prev_expand_inherited_rtentry_hook(root, rte, rti);
+  else
+	return 0;
 }
 
 /*
