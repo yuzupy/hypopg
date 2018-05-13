@@ -12,9 +12,13 @@
 #ifndef _HYPOPG_IMPORT_H_
 #define _HYPOPG_IMPORT_H_
 
+//#include "miscadmin.h"
+//#include "access/heapam.h"
+//#include "catalog/pg_inherits.h"
 #include "nodes/pg_list.h"
 #include "optimizer/planner.h"
 #include "optimizer/pathnode.h"
+//#include "optimizer/prep.h"
 #include "partitioning/partbounds.h"
 #include "utils/rel.h"
 

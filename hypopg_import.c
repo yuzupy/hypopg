@@ -1641,6 +1641,7 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 	 */
 	if (childrte->relkind != RELKIND_PARTITIONED_TABLE || childrte->inh)
 	{
+	  elog(NOTICE, "make appinfo at hypo");
 		appinfo = makeNode(AppendRelInfo);
 		appinfo->parent_relid = parentRTindex;
 		appinfo->child_relid = childRTindex;
