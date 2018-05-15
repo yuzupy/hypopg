@@ -392,7 +392,6 @@ hypo_expand_inherited_rtentry_hook(PlannerInfo *root, RangeTblEntry *rte,
 	  hypo_expandHypotheticalPartitioning(root, rte, rti);
 	  return 1;
 	}
-
   if (prev_expand_inherited_rtentry_hook)
 	return prev_expand_inherited_rtentry_hook(root, rte, rti);
   else
