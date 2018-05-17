@@ -22,6 +22,7 @@
 #define HYPO_ADD_PART_COLS	2	/* # of column hypopg_add_partition() returns */
 
 #include "optimizer/paths.h"
+#include "optimizer/prep.h"
 
 /*--- Structs --- */
 
@@ -65,12 +66,26 @@ Datum		hypopg_partition_table(PG_FUNCTION_ARGS);
 Datum		hypopg_reset_table(PG_FUNCTION_ARGS);
 
 bool hypo_table_oid_is_hypothetical(Oid relid);
+hypoTable *hypo_find_table(Oid parentid);
+
 void hypo_injectHypotheticalPartitioning(PlannerInfo *root,
 					 Oid relationObjectId,
 					 RelOptInfo *rel);
-void hypo_markDummyIfExcluded(PlannerInfo *root, RelOptInfo *rel,
-			      Index rti, RangeTblEntry *rte);
+
 void hypo_setPartitionPathlist(PlannerInfo *root, RelOptInfo *rel,
 			      Index rti, RangeTblEntry *rte);
+
+PartitionDesc hypo_generate_partitiondesc(hypoTable *parent);
+
+PartitionKey hypo_getPartitionKey(Relation relation);
+
+List *hypo_find_inheritance_children(hypoTable *parent);
+
+void hypo_ExpandChildRTE(PlannerInfo *root, RangeTblEntry *parentrte,
+						 Index parentRTindex, Relation parentrel,PlanRowMark *top_parentrc,
+						 List **appinfos, PartitionDesc partdesc);
+
+void hypo_BuildChildRTE(RangeTblEntry *childrte, Oid parentOID, Oid childOID);
+
 
 #endif

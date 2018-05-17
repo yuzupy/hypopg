@@ -80,6 +80,28 @@ static void hypo_set_rel_pathlist_hook(PlannerInfo *root,
 									   RangeTblEntry *rte);
 static set_rel_pathlist_hook_type prev_set_rel_pathlist_hook = NULL;
 
+static PartitionDesc hypo_RelationGetPartitionDesc_hook(Oid relid);
+static RelationGetPartitionDesc_hook_type prev_RelationGetPartitionDesc_hook = NULL;
+
+static PartitionKey hypo_RelationGetPartitionKey_hook(Oid relid);
+static RelationGetPartitionKey_hook_type prev_RelationGetPartitionKey_hook = NULL;
+
+static bool hypo_skip_has_subclass_hook(Oid parentOID);
+static skip_has_subclass_hook_type prev_skip_has_subclass_hook = NULL;
+
+static List *hypo_find_all_inheritors_hook(Oid parentrelID);
+static find_all_inheritors_hook_type prev_find_all_inheritors_hook = NULL;
+
+static void hypo_expand_child_rtentry_hook(PlannerInfo *root, RangeTblEntry *parentrte,
+										   Index parentRTindex, Relation parentrel,
+										   PlanRowMark *top_parentrc, List **appinfos,
+										   PartitionDesc partdesc);
+static expand_child_rtentry_hook_type prev_expand_child_rtentry_hook = NULL;
+
+static void hypo_build_child_rtentry_hook(RangeTblEntry *childrte, Oid parentOID, Oid childOID);
+static build_child_rtentry_hook_type prev_build_child_rtentry_hook = NULL;
+
+
 static bool hypo_query_walker(Node *node);
 
 void
@@ -100,6 +122,24 @@ _PG_init(void)
 
 	prev_set_rel_pathlist_hook = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = hypo_set_rel_pathlist_hook;
+
+	prev_RelationGetPartitionDesc_hook = RelationGetPartitionDesc_hook;
+	RelationGetPartitionDesc_hook = hypo_RelationGetPartitionDesc_hook;
+
+	prev_RelationGetPartitionKey_hook = RelationGetPartitionKey_hook;
+	RelationGetPartitionKey_hook = hypo_RelationGetPartitionKey_hook;
+
+	prev_skip_has_subclass_hook = skip_has_subclass_hook;
+	skip_has_subclass_hook = hypo_skip_has_subclass_hook;
+
+	prev_find_all_inheritors_hook = find_all_inheritors_hook;
+	find_all_inheritors_hook = hypo_find_all_inheritors_hook;
+
+	prev_expand_child_rtentry_hook = expand_child_rtentry_hook;
+	expand_child_rtentry_hook = hypo_expand_child_rtentry_hook;
+
+	prev_build_child_rtentry_hook = build_child_rtentry_hook;
+	build_child_rtentry_hook = hypo_build_child_rtentry_hook;
 
 	isExplain = false;
 	hypoIndexes = NIL;
@@ -137,6 +177,12 @@ _PG_fini(void)
 	get_relation_info_hook = prev_get_relation_info_hook;
 	explain_get_index_name_hook = prev_explain_get_index_name_hook;
 	set_rel_pathlist_hook = prev_set_rel_pathlist_hook;
+	RelationGetPartitionDesc_hook = prev_RelationGetPartitionDesc_hook;
+	RelationGetPartitionKey_hook = prev_RelationGetPartitionKey_hook;
+	skip_has_subclass_hook = prev_skip_has_subclass_hook;
+	find_all_inheritors_hook = prev_find_all_inheritors_hook;
+	expand_child_rtentry_hook = prev_expand_child_rtentry_hook;
+	build_child_rtentry_hook = prev_build_child_rtentry_hook;
 }
 
 /*---------------------------------
@@ -367,6 +413,104 @@ hypo_set_rel_pathlist_hook(PlannerInfo *root,
 	if (prev_set_rel_pathlist_hook)
 		prev_set_rel_pathlist_hook(root, rel, rti, rte);
 }
+
+
+static PartitionDesc
+hypo_RelationGetPartitionDesc_hook(Oid relid)
+{
+	hypoTable *table;
+
+	if (HYPO_ENABLED() &&
+		hypo_table_oid_is_hypothetical(relid))
+	{
+		table = hypo_find_table(relid);
+		return hypo_generate_partitiondesc(table);
+	}
+
+	if (prev_RelationGetPartitionDesc_hook)
+		return prev_RelationGetPartitionDesc_hook(relid);
+	else
+		return NULL;
+}
+
+static PartitionKey
+hypo_RelationGetPartitionKey_hook(Oid relid)
+{
+	hypoTable *table;
+
+	if (HYPO_ENABLED() &&
+		hypo_table_oid_is_hypothetical(relid))
+	{
+		table = hypo_find_table(relid);
+		return table->partkey;
+	}
+
+	if (prev_RelationGetPartitionKey_hook)
+		return prev_RelationGetPartitionKey_hook(relid);
+	else
+		return NULL;
+}
+
+static bool
+hypo_skip_has_subclass_hook(Oid parentOID)
+{
+	if (HYPO_ENABLED() && hypo_table_oid_is_hypothetical(parentOID))
+		return true;
+
+	if (prev_skip_has_subclass_hook)
+		return prev_skip_has_subclass_hook(parentOID);
+	else return false;
+}
+
+static List *
+hypo_find_all_inheritors_hook(Oid relid)
+{
+	List *list;
+	hypoTable *table;
+
+	if (HYPO_ENABLED() && hypo_table_oid_is_hypothetical(relid))
+	{
+		table = hypo_find_table(relid);
+		list = hypo_find_inheritance_children(table);
+		list = lcons_oid(relid, list);
+		return list;
+	}
+
+	if (prev_find_all_inheritors_hook)
+		return prev_find_all_inheritors_hook(relid);
+	else
+		return NIL;
+}
+
+
+static void
+hypo_expand_child_rtentry_hook(PlannerInfo *root, RangeTblEntry *parentrte,
+						  Index parentRTindex, Relation parentrel,PlanRowMark *top_parentrc,
+						  List **appinfos, PartitionDesc partdesc)
+{
+	if (HYPO_ENABLED() &&
+		hypo_table_oid_is_hypothetical(parentrel->rd_id))
+		hypo_ExpandChildRTE(root, parentrte, parentRTindex, parentrel,
+							top_parentrc, appinfos, partdesc);
+
+	if (prev_expand_child_rtentry_hook)
+		prev_expand_child_rtentry_hook(root, parentrte, parentRTindex, parentrel,
+									   top_parentrc, appinfos, partdesc);
+}
+
+
+static void
+hypo_build_child_rtentry_hook(RangeTblEntry *childrte, Oid parentOID, Oid childOID)
+{
+	if (HYPO_ENABLED() &&
+		hypo_table_oid_is_hypothetical(childrte->relid))
+		hypo_BuildChildRTE(childrte, parentOID, childOID);
+
+	if (prev_build_child_rtentry_hook)
+		prev_build_child_rtentry_hook(childrte, parentOID, childOID);
+}
+
+
 
 
 /*

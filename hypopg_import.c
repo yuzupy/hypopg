@@ -1564,4 +1564,199 @@ create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
 }
 
 
+/*
+ * Copied from src/backend/optimizer/prep/prepunion.c, not exported
+ *
+ * expand_single_inheritance_child
+ *		Build a RangeTblEntry and an AppendRelInfo, if appropriate, plus
+ *		maybe a PlanRowMark.
+ *
+ * We now expand the partition hierarchy level by level, creating a
+ * corresponding hierarchy of AppendRelInfos and RelOptInfos, where each
+ * partitioned descendant acts as a parent of its immediate partitions.
+ * (This is a difference from what older versions of PostgreSQL did and what
+ * is still done in the case of table inheritance for unpartitioned tables,
+ * where the hierarchy is flattened during RTE expansion.)
+ *
+ * PlanRowMarks still carry the top-parent's RTI, and the top-parent's
+ * allMarkTypes field still accumulates values from all descendents.
+ *
+ * "parentrte" and "parentRTindex" are immediate parent's RTE and
+ * RTI. "top_parentrc" is top parent's PlanRowMark.
+ *
+ * The child RangeTblEntry and its RTI are returned in "childrte_p" and
+ * "childRTindex_p" resp.
+ */
+void
+expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
+								Index parentRTindex, Relation parentrel,
+								PlanRowMark *top_parentrc, Relation childrel,
+								Oid childOID, List **appinfos,
+								RangeTblEntry **childrte_p, Index *childRTindex_p)
+{
+	Query	   *parse = root->parse;
+	Oid			parentOID = RelationGetRelid(parentrel);
+	RangeTblEntry *childrte;
+	Index		childRTindex;
+	AppendRelInfo *appinfo;
+
+	/*
+	 * Build an RTE for the child, and attach to query's rangetable list. We
+	 * copy most fields of the parent's RTE, but replace relation OID and
+	 * relkind, and set inh = false.  Also, set requiredPerms to zero since
+	 * all required permissions checks are done on the original RTE. Likewise,
+	 * set the child's securityQuals to empty, because we only want to apply
+	 * the parent's RLS conditions regardless of what RLS properties
+	 * individual children may have.  (This is an intentional choice to make
+	 * inherited RLS work like regular permissions checks.) The parent
+	 * securityQuals will be propagated to children along with other base
+	 * restriction clauses, so we don't need to do it here.
+	 */
+	childrte = copyObject(parentrte);
+	*childrte_p = childrte;
+	childrte->relid = childOID;
+	childrte->relkind = childrel->rd_rel->relkind;
+	/* A partitioned child will need to be expanded further. */
+	if (childOID != parentOID &&
+		childrte->relkind == RELKIND_PARTITIONED_TABLE)
+		childrte->inh = true;
+	else
+		childrte->inh = false;
+	childrte->requiredPerms = 0;
+	childrte->securityQuals = NIL;
+
+	if (build_child_rtentry_hook)
+		(*build_child_rtentry_hook)(childrte, parentOID, childOID);
+
+	parse->rtable = lappend(parse->rtable, childrte);
+	childRTindex = list_length(parse->rtable);
+	*childRTindex_p = childRTindex;
+
+
+	/*
+	 * We need an AppendRelInfo if paths will be built for the child RTE. If
+	 * childrte->inh is true, then we'll always need to generate append paths
+	 * for it.  If childrte->inh is false, we must scan it if it's not a
+	 * partitioned table; but if it is a partitioned table, then it never has
+	 * any data of its own and need not be scanned.
+	 */
+	if (childrte->relkind != RELKIND_PARTITIONED_TABLE || childrte->inh)
+	{
+		appinfo = makeNode(AppendRelInfo);
+		appinfo->parent_relid = parentRTindex;
+		appinfo->child_relid = childRTindex;
+		appinfo->parent_reltype = parentrel->rd_rel->reltype;
+		appinfo->child_reltype = childrel->rd_rel->reltype;
+		make_inh_translation_list(parentrel, childrel, childRTindex,
+								  &appinfo->translated_vars);
+		appinfo->parent_reloid = parentOID;
+		*appinfos = lappend(*appinfos, appinfo);
+
+		/*
+		 * Translate the column permissions bitmaps to the child's attnums (we
+		 * have to build the translated_vars list before we can do this). But
+		 * if this is the parent table, leave copyObject's result alone.
+		 *
+		 * Note: we need to do this even though the executor won't run any
+		 * permissions checks on the child RTE.  The insertedCols/updatedCols
+		 * bitmaps may be examined for trigger-firing purposes.
+		 */
+		if (childOID != parentOID)
+		{
+			childrte->selectedCols = translate_col_privs(parentrte->selectedCols,
+														 appinfo->translated_vars);
+			childrte->insertedCols = translate_col_privs(parentrte->insertedCols,
+														 appinfo->translated_vars);
+			childrte->updatedCols = translate_col_privs(parentrte->updatedCols,
+														appinfo->translated_vars);
+		}
+	}
+
+	/*
+	 * Build a PlanRowMark if parent is marked FOR UPDATE/SHARE.
+	 */
+	if (top_parentrc)
+	{
+		PlanRowMark *childrc = makeNode(PlanRowMark);
+
+		childrc->rti = childRTindex;
+		childrc->prti = top_parentrc->rti;
+		childrc->rowmarkId = top_parentrc->rowmarkId;
+		/* Reselect rowmark type, because relkind might not match parent */
+		childrc->markType = select_rowmark_type(childrte,
+												top_parentrc->strength);
+		childrc->allMarkTypes = (1 << childrc->markType);
+		childrc->strength = top_parentrc->strength;
+		childrc->waitPolicy = top_parentrc->waitPolicy;
+
+		/*
+		 * We mark RowMarks for partitioned child tables as parent RowMarks so
+		 * that the executor ignores them (except their existence means that
+		 * the child tables be locked using appropriate mode).
+		 */
+		childrc->isParent = (childrte->relkind == RELKIND_PARTITIONED_TABLE);
+
+		/* Include child's rowmark type in top parent's allMarkTypes */
+		top_parentrc->allMarkTypes |= childrc->allMarkTypes;
+
+		root->rowMarks = lappend(root->rowMarks, childrc);
+	}
+}
+
+
+/*
+ * Copied from src/backend/optimizer/prep/prepunion.c, not exported
+ * translate_col_privs
+ *	  Translate a bitmapset representing per-column privileges from the
+ *	  parent rel's attribute numbering to the child's.
+ *
+ * The only surprise here is that we don't translate a parent whole-row
+ * reference into a child whole-row reference.  That would mean requiring
+ * permissions on all child columns, which is overly strict, since the
+ * query is really only going to reference the inherited columns.  Instead
+ * we set the per-column bits for all inherited columns.
+ */
+Bitmapset *
+translate_col_privs(const Bitmapset *parent_privs,
+					List *translated_vars)
+{
+	Bitmapset  *child_privs = NULL;
+	bool		whole_row;
+	int			attno;
+	ListCell   *lc;
+
+	/* System attributes have the same numbers in all tables */
+	for (attno = FirstLowInvalidHeapAttributeNumber + 1; attno < 0; attno++)
+	{
+		if (bms_is_member(attno - FirstLowInvalidHeapAttributeNumber,
+						  parent_privs))
+			child_privs = bms_add_member(child_privs,
+										 attno - FirstLowInvalidHeapAttributeNumber);
+	}
+
+	/* Check if parent has whole-row reference */
+	whole_row = bms_is_member(InvalidAttrNumber - FirstLowInvalidHeapAttributeNumber,
+							  parent_privs);
+
+	/* And now translate the regular user attributes, using the vars list */
+	attno = InvalidAttrNumber;
+	foreach(lc, translated_vars)
+	{
+		Var		   *var = lfirst_node(Var, lc);
+
+		attno++;
+		if (var == NULL)		/* ignore dropped columns */
+			continue;
+		if (whole_row ||
+			bms_is_member(attno - FirstLowInvalidHeapAttributeNumber,
+						  parent_privs))
+			child_privs = bms_add_member(child_privs,
+										 var->varattno - FirstLowInvalidHeapAttributeNumber);
+	}
+
+	return child_privs;
+}
+
+
+
 #endif

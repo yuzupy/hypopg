@@ -73,8 +73,8 @@ PG_FUNCTION_INFO_V1(hypopg_table);
 
 #if PG_VERSION_NUM >= 100000
 static void hypo_addTable(hypoTable *entry);
-static List *hypo_find_inheritance_children(hypoTable *parent);
-static PartitionDesc hypo_generate_partitiondesc(hypoTable *parent);
+//static List *hypo_find_inheritance_children(hypoTable *parent);
+//static PartitionDesc hypo_generate_partitiondesc(hypoTable *parent);
 static void hypo_generate_partkey(CreateStmt *stmt, Oid parentid,
 		hypoTable *entry);
 static PartitionScheme hypo_find_partition_scheme(PlannerInfo *root,
@@ -89,7 +89,7 @@ static hypoTable *hypo_newTable(Oid parentid);
 static Oid hypo_table_find_parent_entry(hypoTable *entry);
 static Oid hypo_table_find_parent_oid(Oid parentid);
 static Oid hypo_table_find_root_oid(hypoTable *entry);
-static hypoTable *hypo_find_table(Oid tableid);
+//static hypoTable *hypo_find_table(Oid tableid);
 static bool hypo_table_name_is_hypothetical(const char *name);
 static void hypo_table_pfree(hypoTable *entry);
 static bool hypo_table_remove(Oid tableid);
@@ -131,7 +131,7 @@ hypo_addTable(hypoTable *entry)
  * FIXME: simplify the algorithm if we maintain the number of partition per
  * parent.
  */
-static List *
+List *
 hypo_find_inheritance_children(hypoTable *parent)
 {
 	List	   *list = NIL;
@@ -194,7 +194,7 @@ hypo_find_inheritance_children(hypoTable *parent)
  * however HypoMemoryContext is not allowed.  This is heavily inspired on
  * RelationBuildPartitionDesc().
  */
-static PartitionDesc
+PartitionDesc
 hypo_generate_partitiondesc(hypoTable *parent)
 {
 	List	   *inhoids,
@@ -1347,7 +1347,7 @@ hypo_table_find_root_oid(hypoTable *entry)
  * Return the stored hypothetical table corresponding to the Oid if any,
  * otherwise return NULL
  */
-static hypoTable *
+hypoTable *
 hypo_find_table(Oid tableid)
 {
 	ListCell *lc;
@@ -1777,6 +1777,7 @@ hypo_injectHypotheticalPartitioning(PlannerInfo *root,
 				    RelOptInfo *rel)
 {
 	hypoTable *parent;
+	RangeTblEntry *rte = root->simple_rte_array[rel->relid];
 	List *inhoids;
 	int nparts;
 
@@ -1793,96 +1794,9 @@ hypo_injectHypotheticalPartitioning(PlannerInfo *root,
 	 * if this rel is parent, prepare some structures to inject
 	 * hypothetical partitioning
 	 */
-	if(!HYPO_RTI_IS_TAGGED(rel->relid,root))
-	{
-		int i;
-		int oldsize = root->simple_rel_array_size;
-		RangeTblEntry *rte;
-		ListCell *cell;
-		AppendRelInfo *appinfo;
-
-		/* resize and clean rte and rel arrays */
-		root->simple_rel_array_size = oldsize + nparts + 1;
-		root->simple_rel_array = (RelOptInfo **)
-			repalloc(root->simple_rel_array,
-					root->simple_rel_array_size *
-					sizeof(RelOptInfo *));
-		root->simple_rte_array = (RangeTblEntry **)
-			repalloc(root->simple_rte_array,
-					root->simple_rel_array_size *
-					sizeof(RangeTblEntry *));
-
-		for (i=oldsize; i<root->simple_rel_array_size; i++)
-		{
-			root->simple_rel_array[i] = NULL;
-			root->simple_rte_array[i] = NULL;
-		}
-
-		/* rewrite and restore this rel's rte */
-		rte = root->simple_rte_array[rel->relid];
-		rte->relkind = RELKIND_PARTITIONED_TABLE;
-		rte->inh = true;
-
-		root->simple_rte_array[rel->relid] = rte;
-		root->simple_rte_array[oldsize] = rte;
-
-		root->parse->rtable = lappend(root->parse->rtable,
-				root->simple_rte_array[oldsize]);
-
-		HYPO_TAG_RTI(rel->relid, root);
-		HYPO_TAG_RTI(oldsize, root);
-
-
-		/*
-		 * create RangeTblEntries and AppendRelInfos hypothetically
-		 * for all hypothetical partitions
-		 */
-		i = 1;
-		foreach(cell, inhoids)
-		{
-			int newrelid;
-			Oid childOid = lfirst_oid(cell);
-			hypoTable *child;
-			RangeTblEntry *childrte;
-			Relation parentrel;
-
-			child = hypo_find_table(childOid);
-			newrelid = oldsize + i;
-
-			childrte = copyObject(rte);
-			childrte->rtekind = RTE_RELATION;
-			childrte->relid  = relationObjectId; //originalOID;
-			childrte->relkind = RELKIND_RELATION;
-			childrte->inh = false;
-			if(!childrte->alias)
-				childrte->alias = makeNode(Alias);
-			childrte->alias->aliasname = child->tablename;
-			/* FIXME maybe use a mapping array here instead of rte->values_lists*/
-			childrte->values_lists = list_make1_oid(child->oid); //partitionOID
-			root->simple_rte_array[newrelid] = childrte;
-			HYPO_TAG_RTI(newrelid, root);
-
-			appinfo = makeNode(AppendRelInfo);
-			appinfo->parent_relid = rel->relid;
-			appinfo->child_relid = newrelid;
-			parentrel = heap_open(relationObjectId, NoLock);
-			appinfo->parent_reltype = parentrel->rd_rel->reltype;
-			appinfo->child_reltype = parentrel->rd_rel->reltype;
-			make_inh_translation_list(parentrel, parentrel, newrelid,
-					&appinfo->translated_vars);
-			heap_close(parentrel, NoLock);
-			appinfo->parent_reloid = relationObjectId;
-			root->append_rel_list = lappend(root->append_rel_list,
-					appinfo);
-			root->parse->rtable = lappend(root->parse->rtable,
-					root->simple_rte_array[newrelid]);
-
-			i++;
-		}
-
+	if (rte->inh && rte->relkind == RELKIND_PARTITIONED_TABLE)
 		/* add partition info to this rel */
 		hypo_partition_table(root, rel, parent);
-	}
 
 	/*
 	 * If this rel is partitioned by hash, we should rewrite the rel->pages
@@ -1893,8 +1807,7 @@ hypo_injectHypotheticalPartitioning(PlannerInfo *root,
 	 * the set_baserel_size_estimates(). We shouldn't rewrite the rel->pages
 	 * and the rel->tuples here, because they will be rewritten at the later hook.
 	 */
-	if (rel->reloptkind != RELOPT_BASEREL
-		&&HYPO_RTI_IS_TAGGED(rel->relid,root))
+	if(rte->relkind == RELKIND_RELATION)
 	{
 		if (parent->partkey->strategy == PARTITION_STRATEGY_HASH)
 		{
@@ -1916,7 +1829,7 @@ hypo_injectHypotheticalPartitioning(PlannerInfo *root,
 			 * statistics, parent's tuples and baserestrictinfo, we add the partition
 			 * constraints to its rte->securityQuals
 			 */
-			planner_rt_fetch(rel->relid, root)->securityQuals = list_make1(constraints);
+			rte->securityQuals = list_make1(constraints);
 		}
 	}
 }
@@ -2036,6 +1949,80 @@ void hypo_setPartitionPathlist(PlannerInfo *root, RelOptInfo *rel,
 	set_plain_rel_pathlist(root, rel, rte);
 }
 
+
+void
+hypo_ExpandChildRTE(PlannerInfo *root, RangeTblEntry *parentrte,
+					Index parentRTindex, Relation parentrel,PlanRowMark *top_parentrc,
+					List **appinfos, PartitionDesc partdesc)
+{
+	RangeTblEntry *childrte;
+	Index  childRTindex;
+	int i;
+	bool has_child = false;
+
+	for (i = 0; i < partdesc->nparts; i++)
+	{
+		Oid  childOID = partdesc->oids[i];
+		Relation childrel = parentrel;
+
+		/* We have a real partition. */
+		has_child = true;
+
+		expand_single_inheritance_child(root, parentrte, parentRTindex,
+										parentrel, top_parentrc, childrel, childOID,
+										appinfos, &childrte, &childRTindex);
+		/* FIXME: to handle multi-level partitioning */
+	}
+
+	/*
+	 * If the partitioned table has no partitions or all the partitions are
+	 * temporary tables from other backends, treat this as non-inheritance
+	 * case.
+	 */
+	if (!has_child)
+		parentrte->inh = false;
+}
+
+
+void
+hypo_BuildChildRTE(RangeTblEntry *childrte, Oid parentOID, Oid childOID)
+{
+	hypoTable *table = hypo_find_table(childOID);
+
+	/*
+	 * Build an RTE for the child, and attach to query's rangetable list. We
+	 * copy most fields of the parent's RTE, but replace relation OID and
+	 * relkind, and set inh = false.  Also, set requiredPerms to zero since
+	 * all required permissions checks are done on the original RTE. Likewise,
+	 * set the child's securityQuals to empty, because we only want to apply
+	 * the parent's RLS conditions regardless of what RLS properties
+	 * individual children may have.  (This is an intentional choice to make
+	 * inherited RLS work like regular permissions checks.) The parent
+	 * securityQuals will be propagated to children along with other base
+	 * restriction clauses, so we don't need to do it here.
+	 */
+
+	if(childOID != parentOID)
+	{
+		childrte->relid = parentOID;
+		//FIXME: to handle multi-level partitioning
+		childrte->relkind = RELKIND_RELATION;
+		if(!childrte->alias)
+			childrte->alias = makeNode(Alias);
+		childrte->alias->aliasname = table->tablename;
+		/* FIXME maybe use a mapping array here instead of rte->values_lists */
+		childrte->values_lists = list_make1_oid(childOID); //partitionOID
+	}
+	else
+		childrte->relkind = RELKIND_PARTITIONED_TABLE;
+
+	/* A partitioned child will need to be expanded further. */
+	if (childOID != parentOID &&
+		childrte->relkind == RELKIND_PARTITIONED_TABLE)
+		childrte->inh = true;
+	else
+		childrte->inh = false;
+}
 
 
 /*
