@@ -1875,6 +1875,8 @@ void hypo_setPartitionPathlist(PlannerInfo *root, RelOptInfo *rel,
 		{
 			parentRTindex = appinfo->parent_relid;
 			parentrel = root->simple_rel_array[parentRTindex];
+			if (!parentrel)
+				return;
 
 			foreach(lc, parentrel->baserestrictinfo)
 			{
