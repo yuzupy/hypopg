@@ -1876,7 +1876,10 @@ void hypo_setPartitionPathlist(PlannerInfo *root, RelOptInfo *rel,
 			parentRTindex = appinfo->parent_relid;
 			parentrel = root->simple_rel_array[parentRTindex];
 			if (!parentrel)
+			{
+				elog(WARNING, "cannot estimate cost/size correctly");
 				return;
+			}
 
 			foreach(lc, parentrel->baserestrictinfo)
 			{
